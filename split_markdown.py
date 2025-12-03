@@ -14,9 +14,32 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def _match_code_fence(line: str) -> Optional[Tuple[str, int]]:
+    """
+    如果当前行是代码围栏（``` 或 ~~~），则返回其符号和长度。
+
+    仅识别以三个以上反引号或波浪号开头的围栏，允许前置空白。
+    """
+    stripped = line.lstrip()
+    if not stripped.startswith(("```", "~~~")):
+        return None
+
+    marker_char = stripped[0]
+    length = 0
+    for char in stripped:
+        if char == marker_char:
+            length += 1
+        else:
+            break
+
+    if length < 3:
+        return None
+    return marker_char, length
 
 
 @dataclass
@@ -39,7 +62,31 @@ def parse_headings(lines: Iterable[str]) -> List[Heading]:
         Heading 对象列表，包含标题级别、文本以及所在行号。
     """
     headings: List[Heading] = []
+    in_code_fence = False
+    fence_char: Optional[str] = None
+    fence_length = 0
+
     for index, line in enumerate(lines):
+        fence_match = _match_code_fence(line)
+        if fence_match:
+            fence_symbol, symbol_length = fence_match
+            if not in_code_fence:
+                in_code_fence = True
+                fence_char = fence_symbol
+                fence_length = symbol_length
+            elif (
+                fence_char == fence_symbol
+                and fence_length
+                and symbol_length >= fence_length
+            ):
+                in_code_fence = False
+                fence_char = None
+                fence_length = 0
+            continue
+
+        if in_code_fence:
+            continue
+
         match = HEADING_PATTERN.match(line)
         if not match:
             continue
@@ -49,13 +96,20 @@ def parse_headings(lines: Iterable[str]) -> List[Heading]:
     return headings
 
 
-def split_markdown(text: str, level: int = 2) -> List[dict]:
+def split_markdown(
+    text: str,
+    level: int = 2,
+    h1_prefixes: Optional[List[str]] = None,
+    h1_regex: Optional[str] = None,
+) -> List[dict]:
     """
     按指定标题级别拆分 Markdown 文本。
 
     参数:
         text: 完整的 Markdown 字符串。
         level: 需要拆分的标题级别（1-6）。
+        h1_prefixes: 可选，指定 H1 标题需匹配的前缀集合；为空时不过滤。
+        h1_regex: 可选，使用正则表达式匹配 H1 标题；与前缀同时存在时取并集。
 
     返回:
         字典列表，每项代表一个章节，字段包括:
@@ -74,7 +128,28 @@ def split_markdown(text: str, level: int = 2) -> List[dict]:
     plain_lines = text.splitlines()
     lines_with_endings = text.splitlines(keepends=True)
     headings = parse_headings(plain_lines)
-    split_heads = [h for h in headings if h.level <= level]
+    normalized_prefixes = (
+        [prefix.strip() for prefix in h1_prefixes if prefix.strip()]
+        if h1_prefixes
+        else []
+    )
+    compiled_h1_regex = re.compile(h1_regex) if h1_regex else None
+
+    def _h1_allowed(head: Heading) -> bool:
+        if head.level != 1:
+            return True
+
+        if not normalized_prefixes and not compiled_h1_regex:
+            return True
+
+        title = head.title.strip()
+        if normalized_prefixes and any(title.startswith(prefix) for prefix in normalized_prefixes):
+            return True
+        if compiled_h1_regex and compiled_h1_regex.match(title):
+            return True
+        return False
+
+    split_heads = [h for h in headings if h.level <= level and _h1_allowed(h)]
 
     sections: List[dict] = []
     last_line_index = len(plain_lines) - 1
@@ -216,11 +291,27 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--output-dir",
         help="若提供，将章节写入该目录，每个章节一个文件",
     )
+    parser.add_argument(
+        "--h1-prefix",
+        dest="h1_prefixes",
+        action="append",
+        help="仅当 H1 标题以指定前缀开头时才视为有效，可多次使用该参数",
+    )
+    parser.add_argument(
+        "--h1-regex",
+        dest="h1_regex",
+        help="使用正则表达式匹配 H1 标题，语法遵循 Python re 模块",
+    )
 
     args = parser.parse_args(argv)
     input_path = Path(args.input)
     text = input_path.read_text(encoding=args.encoding)
-    sections = split_markdown(text, level=args.level)
+    sections = split_markdown(
+        text,
+        level=args.level,
+        h1_prefixes=args.h1_prefixes,
+        h1_regex=args.h1_regex,
+    )
 
     if args.output_dir:
         original_lines = text.splitlines(keepends=True)

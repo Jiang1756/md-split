@@ -9,6 +9,8 @@
 - `split_markdown(text, level)` 核心函数可在其他脚本中复用。
 - 支持 ATX 风格（`#` ~ `######`）标题识别，并正确处理连续标题、空章节以及文档
   开头无标题的场景。
+- 自动跳过围栏代码块（``` 或 ~~~）中的 `#` 内容，避免误判代码为章节。
+- 支持通过 `--h1-prefix` 或 `--h1-regex` 自定义一级标题匹配方式，过滤掉无效 H1。
 - 简洁的 CLI，可以输出章节概览或写出独立 Markdown 文件。
 
 ## 环境需求
@@ -25,6 +27,12 @@ python3 split_markdown.py input.md --level 2
 
 # 写出多个章节文件（自动创建目录）
 python3 split_markdown.py input.md --level 2 --output-dir out_sections
+
+# 仅将形如 "一、" 或 "1." 的一级标题视为有效
+python3 split_markdown.py input.md --level 1 --h1-prefix "一、" --h1-prefix "1."
+
+# 通过正则表达式匹配“中文数字+顿号”式的一级标题
+python3 split_markdown.py input.md --level 1 --h1-regex '^[一二三四五六七八九十]+[，、：:]'
 ```
 
 ### 命令行参数
@@ -32,6 +40,8 @@ python3 split_markdown.py input.md --level 2 --output-dir out_sections
 - `--level`: 拆分的标题级别，默认 2（范围 1~6）。
 - `--encoding`: 读取与写入文件时使用的编码，默认 `utf-8`。
 - `--output-dir`: 若设置，则将章节写入该目录，以 `01_title.md` 形式命名。
+- `--h1-prefix`: 可重复传入，仅会拆分以这些前缀开头的 H1 标题，适合教材式编号。
+- `--h1-regex`: 传入正则表达式以匹配 H1 标题，更方便描述“中文数字+顿号”等模式。
 
 当不传 `--output-dir` 时，终端会展示各章节的索引、标题、级别与内容行数，帮助你快
 速确认拆分情况。
@@ -57,6 +67,10 @@ for section in sections:
 `split_markdown` 会返回一个列表，每项包含 `title`、`level`、`content`、
 `start_line`、`end_line`。当文档开头没有匹配的标题时，会先返回一个
 `title=None` 的章节来保存前置内容。
+
+若你的 Markdown 中存在大量“伪 H1”（例如“# 个人信息”这种注释），可以在函数调用
+时传入 `h1_prefixes=["一、", "1.", "a."]` 或 `h1_regex=r"^[一二三四五六七八九十]+[，、：:]"`，
+也可以在 CLI 中使用 `--h1-prefix` / `--h1-regex`，这样只有符合条件的一级标题才会被拆分。
 
 ## 内置示例
 当直接运行 `python3 split_markdown.py` 且没有额外参数时，脚本会展示一段包含
